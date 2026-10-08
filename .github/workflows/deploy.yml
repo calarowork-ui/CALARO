@@ -1,0 +1,35 @@
+# After tests pass on main, log in to the Oracle server and update calaro.online.
+# Needs three repository secrets (Settings -> Secrets and variables -> Actions):
+#   SSH_HOST  the server's public IP      SSH_USER  ubuntu      SSH_KEY  the private deploy key
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [Tests]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:          # also lets you press "Run workflow" by hand
+
+concurrency: deploy-production
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Update the server
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" 'cd ~/calaro && bash deploy/update.sh'
+      - name: Check the site answers
+        run: |
+          sleep 20
+          curl -fsS --retry 6 --retry-delay 10 https://calaro.online/api/v1/vaani/status > /dev/null
+          echo "calaro.online is up"

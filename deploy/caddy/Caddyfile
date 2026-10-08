@@ -1,0 +1,78 @@
+# CALARO edge: HTTPS, the web app, the API and Grafana behind the admin login.
+# SITE_ADDRESS: "calaro.online" in production (automatic Let's Encrypt HTTPS),
+#               "http://localhost" on your own computer.
+{
+	email {$ACME_EMAIL:admin@calaro.online}
+	servers {
+		metrics
+	}
+}
+
+{$SITE_ADDRESS:http://localhost} {
+	encode zstd gzip
+
+	log {
+		output stdout
+		format json
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "microphone=(self), camera=(), geolocation=()"
+		# only CALARO itself may frame CALARO pages (the Grafana tab), nobody else (clickjacking)
+		X-Frame-Options "SAMEORIGIN"
+		Content-Security-Policy "frame-ancestors 'self'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+	}
+
+	# reject oversized uploads early (voice clips are well under this)
+	request_body {
+		max_size 10MB
+	}
+
+	# API (the /metrics endpoint is deliberately not routed)
+	handle /api/* {
+		reverse_proxy backend:8000
+	}
+
+	# Grafana: only for signed-in CALARO admins.
+	handle /grafana* {
+		# `route` keeps these steps in the written order. Without it Caddy runs
+		# forward_auth before request_header, which would strip the real identity.
+		route {
+			# 1. never trust identity headers coming from the browser
+			request_header -X-Webauth-User
+			request_header -X-Webauth-Name
+			request_header -X-Webauth-Role
+			# 2. ask CALARO who this is; it adds the headers only for active admins
+			forward_auth backend:8000 {
+				uri /api/v1/admin/monitoring/verify
+				copy_headers X-Webauth-User X-Webauth-Name X-Webauth-Role
+			}
+			# 3. hand over to Grafana
+			reverse_proxy grafana:3000
+		}
+	}
+
+	# The React app (single-page: unknown paths fall back to index.html)
+	handle {
+		root * /srv
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		try_files {path} /index.html
+		file_server
+	}
+}
+
+# Optional (server only): send www to the bare domain. See DEPLOY.md step 3.
+# www.calaro.online {
+# 	redir https://calaro.online{uri} permanent
+# }
+
+# Prometheus scrapes Caddy's traffic metrics here. Not published outside Docker.
+:2020 {
+	metrics
+}

@@ -1,0 +1,14 @@
+# Keep the Docker build small and Linux-only: never send these from your computer
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.venv
+**/*.pyc
+.git
+backups
+e2e
+*.pdf
+# secrets stay out of images (Compose passes them at runtime)
+**/.env
+.env

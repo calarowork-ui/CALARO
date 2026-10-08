@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+motor>=3.5
+pymongo>=4.8
+pyjwt>=2.10
+passlib[argon2]
+python-multipart
+python-dotenv
+pydantic[email]
+pydantic-settings
+prometheus-fastapi-instrumentator
+httpx
+fastapi-mail

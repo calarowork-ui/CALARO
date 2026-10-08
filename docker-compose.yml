@@ -1,0 +1,178 @@
+# CALARO: the whole stack in one command.
+#   Your computer:  docker compose up --build -d        -> http://localhost
+#   Server:         same command, with SITE_ADDRESS=calaro.online in .env -> https://calaro.online
+# Only Caddy is reachable from outside (ports 80/443). Everything else stays on the internal network.
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: deploy/caddy/Dockerfile
+    container_name: calaro-caddy
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-http://localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@calaro.online}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro   # edit + `docker compose restart caddy`, no rebuild
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [backend, grafana]
+    logging: *logging
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: calaro-backend
+    restart: unless-stopped
+    env_file:
+      - path: backend/.env.example
+        required: true
+      - path: backend/.env          # your secrets: SECRET_KEY, SUPERADMIN_PASSWORD, Bhashini keys
+        required: false
+    environment:
+      MONGODB_URI: mongodb://mongo:27017
+      BACKEND_CORS_ORIGINS: '["http://localhost:5173","http://localhost","${PUBLIC_URL:-http://localhost}"]'
+    depends_on:
+      mongo:
+        condition: service_healthy
+    logging: *logging
+
+  mongo:
+    image: mongo:7
+    container_name: calaro-mongo
+    restart: unless-stopped
+    command: ["--quiet"]
+    volumes:
+      - calaro_mongo_data:/data/db
+    ports:
+      - "127.0.0.1:27017:27017"   # this machine only (for MongoDB Compass / backups), never the internet
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging: *logging
+
+  # ---------------------------------------------------------------- monitoring
+  prometheus:
+    image: prom/prometheus:v3.4.0
+    container_name: calaro-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --storage.tsdb.retention.size=5GB
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    logging: *logging
+
+  loki:
+    image: grafana/loki:3.5.0
+    container_name: calaro-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ./deploy/loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    logging: *logging
+
+  alloy:
+    image: grafana/alloy:v1.8.0
+    container_name: calaro-alloy
+    restart: unless-stopped
+    command: ["run", "--storage.path=/var/lib/alloy/data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./deploy/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - alloy_data:/var/lib/alloy/data
+    depends_on: [loki]
+    logging: *logging
+
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    container_name: calaro-node-exporter
+    restart: unless-stopped
+    # Works on Docker Desktop (Windows/Mac) and on Linux servers
+    command:
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
+      - --path.rootfs=/rootfs
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|run/.+)($|/)
+    pid: host
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    logging: *logging
+
+  grafana:
+    image: grafana/grafana:12.0.0
+    container_name: calaro-grafana
+    restart: unless-stopped
+    environment:
+      GF_SERVER_ROOT_URL: ${PUBLIC_URL:-http://localhost}/grafana/
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      # Sign-in is handled by CALARO: Caddy asks the backend, the backend answers with these headers
+      GF_AUTH_PROXY_ENABLED: "true"
+      GF_AUTH_PROXY_HEADER_NAME: X-WEBAUTH-USER
+      GF_AUTH_PROXY_HEADER_PROPERTY: username
+      GF_AUTH_PROXY_AUTO_SIGN_UP: "true"
+      GF_AUTH_PROXY_HEADERS: "Name:X-WEBAUTH-NAME Role:X-WEBAUTH-ROLE"
+      GF_AUTH_PROXY_SYNC_TTL: "5"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_AUTH_DISABLE_SIGNOUT_MENU: "true"
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_AUTO_ASSIGN_ORG_ROLE: Viewer
+      GF_USERS_DEFAULT_THEME: light
+      GF_SECURITY_ADMIN_USER: ${SUPERADMIN_EMAIL:-calaro@admin.calaro.com}
+      GF_SECURITY_ALLOW_EMBEDDING: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/calaro-overview.json
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_LOG_MODE: console
+      GF_LOG_LEVEL: warn
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus, loki]
+    logging: *logging
+
+  # Optional database browser on this machine only: docker compose --profile tools up -d -> http://localhost:8081
+  mongo-express:
+    image: mongo-express:1
+    profiles: ["tools"]
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD:-change-me}
+    ports:
+      - "127.0.0.1:8081:8081"
+    depends_on: [mongo]
+
+volumes:
+  calaro_mongo_data:
+  caddy_data:
+  caddy_config:
+  prometheus_data:
+  loki_data:
+  alloy_data:
+  grafana_data:

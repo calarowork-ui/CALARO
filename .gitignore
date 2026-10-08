@@ -1,0 +1,8 @@
+﻿.env
+backend/.env
+backend/.venv/
+frontend/node_modules/
+c******aro.db
+__pycache__/
+backups/
+frontend/dist/

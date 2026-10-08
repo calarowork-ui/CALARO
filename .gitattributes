@@ -1,0 +1,5 @@
+# Keep Linux line endings for files that run on the server
+*.sh text eol=lf
+Caddyfile text eol=lf
+*.alloy text eol=lf
+*.yml text eol=lf
