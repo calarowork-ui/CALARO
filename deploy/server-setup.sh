@@ -19,7 +19,7 @@ echo "==> Opening ports 80 and 443 in the server's own firewall (needed on Oracl
 open_port() {
   local proto=$1 port=$2
   if ! sudo iptables -C INPUT -p "$proto" --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; then
-    sudo iptables -I INPUT 5 -p "$proto" --dport "$port" -m state --state NEW -j ACCEPT
+    sudo iptables -I INPUT 1 -p "$proto" --dport "$port" -m state --state NEW -j ACCEPT
   fi
 }
 open_port tcp 80
