@@ -1,0 +1,39 @@
+# Settings for a small server with 1 GB of memory, such as the free Azure for Students VM (B2ats v2 / B1s).
+# Turn it on by adding this line to the .env file next to docker-compose.yml:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.small.yml
+# Every docker compose command (and deploy/update.sh) then uses it automatically.
+#
+# It caps how much memory each service may use and shortens how long metrics are kept.
+# The server also needs swap (deploy/server-setup.sh adds 4 GB).
+
+services:
+  caddy:
+    mem_limit: 128m
+
+  backend:
+    mem_limit: 320m
+
+  mongo:
+    # MongoDB normally takes half of the machine's memory for its cache. 0.25 GB is plenty for CALARO.
+    command: ["--quiet", "--wiredTigerCacheSizeGB", "0.25"]
+    mem_limit: 450m
+
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=2GB
+    mem_limit: 256m
+
+  loki:
+    mem_limit: 256m
+
+  alloy:
+    mem_limit: 192m
+
+  node-exporter:
+    mem_limit: 64m
+
+  grafana:
+    mem_limit: 256m

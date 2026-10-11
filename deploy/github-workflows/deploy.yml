@@ -1,6 +1,6 @@
-# After tests pass on main, log in to the Oracle server and update calaro.online.
+# After tests pass on main, log in to the server and update calaro.online.
 # Needs three repository secrets (Settings -> Secrets and variables -> Actions):
-#   SSH_HOST  the server's public IP      SSH_USER  ubuntu      SSH_KEY  the private deploy key
+#   SSH_HOST  the server's public IP      SSH_USER  azureuser (Azure) or ubuntu (Oracle)      SSH_KEY  the private deploy key
 name: Deploy
 
 on:
@@ -16,12 +16,16 @@ jobs:
   deploy:
     if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    env:
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_KEY: ${{ secrets.SSH_KEY }}
     steps:
+      - name: Server not set up yet
+        if: env.SSH_HOST == ''
+        run: echo "::notice::Skipping deploy - add the SSH_HOST, SSH_USER and SSH_KEY secrets to turn it on."
       - name: Update the server
-        env:
-          SSH_HOST: ${{ secrets.SSH_HOST }}
-          SSH_USER: ${{ secrets.SSH_USER }}
-          SSH_KEY: ${{ secrets.SSH_KEY }}
+        if: env.SSH_HOST != ''
         run: |
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy_key
@@ -29,6 +33,7 @@ jobs:
           ssh-keyscan -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null
           ssh -i ~/.ssh/deploy_key "$SSH_USER@$SSH_HOST" 'cd ~/calaro && bash deploy/update.sh'
       - name: Check the site answers
+        if: env.SSH_HOST != ''
         run: |
           sleep 20
           curl -fsS --retry 6 --retry-delay 10 https://calaro.online/api/v1/vaani/status > /dev/null

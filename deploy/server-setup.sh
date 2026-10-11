@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One-time setup for a fresh Ubuntu 22.04/24.04 server (Oracle Cloud Always Free, Ampere A1).
-# Run as the default "ubuntu" user:  bash deploy/server-setup.sh
+# One-time setup for a fresh Ubuntu 22.04/24.04 server (Azure for Students VM, Oracle Cloud, or any other).
+# Run as the server's normal user (azureuser on Azure, ubuntu on Oracle):  bash deploy/server-setup.sh
 set -euo pipefail
 
 echo "==> Updating packages"
@@ -15,7 +15,7 @@ fi
 sudo usermod -aG docker "$USER"
 sudo systemctl enable --now docker
 
-echo "==> Opening ports 80 and 443 (Oracle's Ubuntu image blocks everything except SSH)"
+echo "==> Opening ports 80 and 443 in the server's own firewall (needed on Oracle, harmless elsewhere)"
 open_port() {
   local proto=$1 port=$2
   if ! sudo iptables -C INPUT -p "$proto" --dport "$port" -m state --state NEW -j ACCEPT 2>/dev/null; then
@@ -27,17 +27,19 @@ open_port tcp 443
 open_port udp 443
 sudo netfilter-persistent save
 
-echo "==> Adding 2 GB swap (helps during image builds)"
+echo "==> Adding 4 GB swap (a 1 GB server needs it for image builds and the monitoring stack)"
 if [ ! -f /swapfile ]; then
-  sudo fallocate -l 2G /swapfile
+  sudo fallocate -l 4G /swapfile
   sudo chmod 600 /swapfile
   sudo mkswap /swapfile
   sudo swapon /swapfile
   echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab >/dev/null
 fi
+echo 'vm.swappiness=20' | sudo tee /etc/sysctl.d/99-calaro.conf >/dev/null
+sudo sysctl -p /etc/sysctl.d/99-calaro.conf >/dev/null
 
 echo "==> Turning on automatic security updates"
 sudo dpkg-reconfigure -f noninteractive unattended-upgrades
 
 echo
-echo "Done. Log out and back in (so the docker group applies), then continue with DEPLOY.md step 5."
+echo "Done. Log out and back in (so the docker group applies), then continue with DEPLOY.md."
