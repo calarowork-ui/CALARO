@@ -17,6 +17,13 @@ services:
     # MongoDB normally takes half of the machine's memory for its cache. 0.25 GB is plenty for CALARO.
     command: ["--quiet", "--wiredTigerCacheSizeGB", "0.25"]
     mem_limit: 450m
+    # The health check starts mongosh (~100 MB) each time. Every 10 s is too much for 1 GB and made
+    # MongoDB look "unhealthy" when the server was busy. Check once a minute and allow it more time.
+    healthcheck:
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
 
   prometheus:
     command:
